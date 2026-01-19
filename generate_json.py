@@ -47,7 +47,6 @@ def generate_json(taskset, num_cpus, system_overhead=0.02, lock_pages=True, ftra
     # Generate parameters for each task
     for line in taskset.strip().split('\n'):
         task_name = f"task_{i}"
-        i += 1
         task = tuple(map(float, line.split()))
 
         period_us = task[1] * 1.0
@@ -77,9 +76,9 @@ def generate_json(taskset, num_cpus, system_overhead=0.02, lock_pages=True, ftra
         # Define the task structure for the JSON output
         task_config = {
             "policy": "SCHED_DEADLINE",
-            "dl-runtime": dl_runtime_us,
-            "dl-period": period_us,
-            "dl-deadline": period_us, # Implicit deadline
+            "dl-runtime": int(dl_runtime_us),
+            "dl-period": int(period_us),
+            "dl-deadline": int(period_us), # Implicit deadline
             "cpus": cpu_affinity,
             "phases": {
                 # A single, infinitely looping phase to represent a periodic task
@@ -103,9 +102,10 @@ def generate_json(taskset, num_cpus, system_overhead=0.02, lock_pages=True, ftra
             task_config["phases"][f"phase_{i}"]["runtime"] = actual_runtime_us
 
         # Add timer event AFTER workload events (rt-app requirement)
-        task_config["phases"][f"phase_{i}"]["timer"] = {"ref": "unique", "period": period_us, "mode": "absolute"}
+        task_config["phases"][f"phase_{i}"]["timer"] = {"ref": "unique", "period": int(period_us), "mode": "absolute"}
 
         config["tasks"][task_name] = task_config
+        i += 1
 
     if verbose:
         print(f"Generated tasks for {num_cpus} CPUs using {event_type} events")
