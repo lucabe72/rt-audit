@@ -182,7 +182,7 @@ def main():
         'period_distribution': "unif",
         'seed': time.time(),
         'max_util': 0.8,
-        'output': 'taskset.txt',
+        'output': None,
     }
     for key, value in defaults.items():
         if key not in config_params:
@@ -232,16 +232,19 @@ def main():
 
     # Write the JSON to the specified output file
     output_file = config_params['output']
-    with open(output_file, 'w') as f:
-        f.write(taskset)
+    if output_file is None:
+        sys.stdout.write(taskset)
+    else:
+        with open(output_file, 'w') as f:
+            f.write(taskset)
 
     if verbose:
         print(f"Generated taskset JSON:")
         print(taskset)
         print()
 
-    print(f"Successfully generated taskset and saved to '{output_file}'")
-    print(f"To run, convert to an rt-app JSON using generate_json.py")
+    print(f"Successfully generated taskset and saved to '{output_file}'", file=sys.stderr)
+    print(f"To run, convert to an rt-app JSON using generate_json.py", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
