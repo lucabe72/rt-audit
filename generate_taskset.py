@@ -11,6 +11,8 @@ import json
 import random
 import argparse
 import math
+import time
+import sys
 import os
 
 def uunifast(n, u_total):
@@ -35,15 +37,16 @@ def uunifast(n, u_total):
     utilizations.append(sum_u)
     return utilizations
 
-def generate_taskset(num_cpus, num_tasks, min_period_ms, max_period_ms, max_task_util, total_utilization, system_overhead=0.02, lock_pages=True, ftrace="none", event_type="runtime", verbose=False):
+def generate_taskset(num_cpus, num_tasks, period_min_ms, period_max_ms, period_gran_ms, max_task_util, total_utilization, system_overhead=0.02, lock_pages=True, ftrace="none", event_type="runtime", verbose=False):
     """
     Generates a random taskset in rt-app's JSON format.
 
     Args:
         num_cpus (int): The number of CPUs in the system.
         num_tasks (int): The number of tasks to generate.
-        min_period_ms (int): The minimum task period in milliseconds.
-        max_period_ms (int): The maximum task period in milliseconds.
+        period_min_ms (int): The minimum task period in milliseconds.
+        period_max_ms (int): The maximum task period in milliseconds.
+        period_gran_ms (int): The period granularity in milliseconds.
         max_task_util (float): The maximum utilization for any single task.
         total_utilization (float): The target total utilization for the taskset.
         system_overhead (float): System overhead as fraction (0.0-1.0). Default: 0.02.
@@ -74,7 +77,7 @@ def generate_taskset(num_cpus, num_tasks, min_period_ms, max_period_ms, max_task
         print(f"  Each task must have utilization >= {min_required_util:.3f}, but max_task_util = {max_task_util:.3f}")
         print(f"  Solutions:")
         print(f"    1. Increase max_task_util to at least {min_required_util:.3f}")
-        print(f"    2. Decrease total_utilization to at most {max_task_util * num_tasks:.2f}")
+        print(f"    2. Decrease the taskset utilization to at most {max_task_util * num_tasks:.2f}")
         print(f"    3. Increase number of tasks")
         return None
 
@@ -93,7 +96,7 @@ def generate_taskset(num_cpus, num_tasks, min_period_ms, max_period_ms, max_task
         print(f"Error: Failed to generate valid utilizations after {max_attempts} attempts")
         print(f"  Consider adjusting parameters:")
         print(f"    - Increase max_task_util (currently {max_task_util:.3f})")
-        print(f"    - Decrease total_utilization (currently {total_utilization:.3f})")
+        print(f"    - Decrease the taskset utilization (currently {total_utilization:.3f})")
         print(f"    - Increase number of tasks (currently {num_tasks})")
         return None
 
@@ -108,7 +111,7 @@ def generate_taskset(num_cpus, num_tasks, min_period_ms, max_period_ms, max_task
         utilization = task_utils[i]
         
         # Randomly select a period within the specified range (in microseconds)
-        period_us = random.randint(min_period_ms, max_period_ms) * 1000
+        period_us = random.randint(period_min_ms, period_max_ms) * 1000
         
         # Calculate the deadline runtime (dl_runtime) based on utilization and period
         # This represents the maximum time the task can execute within its deadline
@@ -185,10 +188,13 @@ def main():
     # Arguments for taskset generation
     parser.add_argument("-c", "--cpus", type=int, help="Number of CPUs.")
     parser.add_argument("-n", "--tasks", type=int, help="Number of tasks to generate.")
-    parser.add_argument("--min-period", type=int, help="Minimum task period in milliseconds.")
-    parser.add_argument("--max-period", type=int, help="Maximum task period in milliseconds.")
+    parser.add_argument("-p", "--period-min", type=int, help="Minimum task period in milliseconds.")
+    parser.add_argument("-P", "--period-max", type=int, help="Maximum task period in milliseconds.")
+    parser.add_argument("-g", "--period-gran", type=int, help="Period granularity.")
+    parser.add_argument("-d", "--period-distribution", type=str, help="Period distrubution ('unif' or 'logunif').")
+    parser.add_argument("-S", "--seed", type=int, help="Seed for the pseudo-random numbers generator.")
+    parser.add_argument("-u", "--taskset-utilization", type=float, help="Target total utilization for the taskset. Defaults to 70%% of system capacity.")
     parser.add_argument("--max-util", type=float, help="Maximum utilization for a single task (0.0 to 1.0).")
-    parser.add_argument("--total-util", type=float, help="Target total utilization for the taskset. Defaults to 70%% of system capacity.")
     
     # Arguments for file I/O
     parser.add_argument("-o", "--output", type=str, help="Output JSON file name.")
@@ -233,10 +239,13 @@ def main():
     cli_args = {
         'cpus': args.cpus,
         'tasks': args.tasks,
-        'min_period': args.min_period,
-        'max_period': args.max_period,
+        'period_min': args.period_min,
+        'period_max': args.period_max,
+        'period_gran': args.period_gran,
+        'period_distribution': args.period_distribution,
+        'seed': args.seed,
         'max_util': args.max_util,
-        'total_util': args.total_util,
+        'taskset_utilization': args.taskset_utilization,
         'output': args.output,
         'ftrace': args.ftrace
     }
@@ -263,8 +272,11 @@ def main():
     # --- Set Defaults and Validate ---
     # Set default values for any parameter that is still missing
     defaults = {
-        'min_period': 10,
-        'max_period': 100,
+        'period_min': 10,
+        'period_max': 100,
+        'period_gran': 1,
+        'period_distribution': "unif",
+        'seed': time.time(),
         'max_util': 0.8,
         'output': 'taskset.json',
         'system_overhead': 0.02,
@@ -278,26 +290,28 @@ def main():
             if verbose:
                 print(f"Default: {key} = {value}")
 
+    if config_params['period_distribution'] != "unif":
+        print(f"Distribution {config_params['period_distribution']} is not supported (yet)")
+        sys.exit(-1)
+
+    if config_params['period_gran'] != 1:
+        print(f"Period granularity {config_params['period_gran']} is not supported (yet)")
+        sys.exit(-1)
+
     # Required parameters must be present now
-    required_params = ['cpus', 'tasks']
+    required_params = ['cpus', 'tasks', 'taskset_utilization']
     for param in required_params:
         if param not in config_params:
             print(f"Error: Missing required parameter '{param}'. Provide it via command line or config file.")
             return
             
-    # Handle the default for total_utilization, which depends on the number of CPUs
-    if 'total_util' not in config_params:
-        config_params['total_util'] = config_params['cpus'] * 0.7
-        if verbose:
-            print(f"Calculated default: total_util = {config_params['total_util']}")
-
     if verbose:
         print(f"\nGenerating taskset with parameters:")
         print(f"  CPUs: {config_params['cpus']}")
         print(f"  Tasks: {config_params['tasks']}")
-        print(f"  Period range: {config_params['min_period']}-{config_params['max_period']} ms")
+        print(f"  Period range: {config_params['period_min']}-{config_params['period_max']} ms")
         print(f"  Max task utilization: {config_params['max_util']}")
-        print(f"  Total utilization: {config_params['total_util']}")
+        print(f"  Total utilization: {config_params['taskset_utilization']}")
         print(f"  System overhead: {config_params['system_overhead']:.1%}")
         print(f"  rt-app options:")
         print(f"    Lock pages: {config_params['lock_pages']}")
@@ -308,18 +322,20 @@ def main():
     # Warn about potential constraint issues
     if config_params['tasks'] < config_params['cpus'] // 2:
         print(f"Warning: Few tasks ({config_params['tasks']}) compared to CPUs ({config_params['cpus']})")
-        print(f"  This may cause constraint violations if total_utilization is too high")
-        print(f"  Consider increasing tasks or decreasing total_utilization")
+        print(f"  This may cause constraint violations if taskset_utilization is too high")
+        print(f"  Consider increasing tasks or decreasing the taskset utilization")
         print()
-    
+
+    random.seed(config_params['seed'])
     # --- Generate Taskset ---
     taskset_json = generate_taskset(
         num_cpus=config_params['cpus'],
         num_tasks=config_params['tasks'],
-        min_period_ms=config_params['min_period'],
-        max_period_ms=config_params['max_period'],
+        period_min_ms=config_params['period_min'],
+        period_max_ms=config_params['period_max'],
+        period_gran_ms=config_params['period_gran'],
         max_task_util=config_params['max_util'],
-        total_utilization=config_params['total_util'],
+        total_utilization=config_params['taskset_utilization'],
         system_overhead=config_params['system_overhead'],
         lock_pages=config_params['lock_pages'],
         ftrace=config_params['ftrace'],
